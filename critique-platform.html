@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Redline — Design Critique Board</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #FAF9F4; }
+  #root { min-height: 100vh; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useCallback } = React;
+
+/* ---------------------------------------------------------
+   DESIGN TOKENS
+   Paper #FAF9F4 · Ink #1C1B17 · Blueprint #2A4FD6
+   Critique Red #D6432B · Warm Gray #9A9484 · Highlight #F0C33C
+--------------------------------------------------------- */
+
+const FONT_IMPORT = `
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Source+Serif+4:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap');
+`;
+
+const CATS = ["typography", "layout", "color", "concept", "ux"];
+const CAT_LABEL = { typography: "Typography", layout: "Layout", color: "Color", concept: "Concept", ux: "UX" };
+
+const uid = () => Math.random().toString(36).slice(2, 10);
+const now = () => Date.now();
+
+const SEED_DESIGNS = [
+  {
+    id: "seed-1",
+    title: "Meridian — Fintech Onboarding",
+    ownerName: "Priya Kapoor",
+    category: "Product / UI",
+    imageV1: null,
+    imageV2: null,
+    isPlaceholder: true,
+    hue: 224,
+    createdAt: now() - 86400000 * 2,
+  },
+  {
+    id: "seed-2",
+    title: "Kindred — Brand Identity",
+    ownerName: "Theo Marsh",
+    category: "Branding",
+    imageV1: null,
+    imageV2: null,
+    isPlaceholder: true,
+    hue: 12,
+    createdAt: now() - 86400000 * 5,
+  },
+];
+
+/* ---------------------------------------------------------
+   STORAGE HELPERS
+--------------------------------------------------------- */
+async function loadList(prefix) {
+  try {
+    const r = await window.storage.list(prefix, true);
+    if (!r || !r.keys || r.keys.length === 0) return [];
+    const items = [];
+    for (const k of r.keys) {
+      try {
+        const v = await window.storage.get(k, true);
+        if (v) items.push(JSON.parse(v.value));
+      } catch (e) {}
+    }
+    return items;
+  } catch (e) {
+    return [];
+  }
+}
+async function saveItem(prefix, id, obj) {
+  try {
+    await window.storage.set(`${prefix}:${id}`, JSON.stringify(obj), true);
+  } catch (e) {}
+}
+
+/* ---------------------------------------------------------
+   SMALL UI PRIMITIVES
+--------------------------------------------------------- */
+
+function GreaseDial({ value, size = 44, label }) {
+  const r = size / 2 - 4;
+  const c = 2 * Math.PI * r;
+  const pct = Math.max(0, Math.min(10, value)) / 10;
+  const offset = c * (1 - pct);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+      <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
+        <circle cx={size / 2} cy={size / 2} r={r} stroke="#E4E0D4" strokeWidth={3.5} fill="none" />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          stroke="#2A4FD6"
+          strokeWidth={3.5}
+          fill="none"
+          strokeDasharray={c}
+          strokeDashoffset={offset}
+          strokeLinecap="round"
+          style={{ transition: "stroke-dashoffset 0.5s ease" }}
+        />
+      </svg>
+      <div style={{ position: "relative", marginTop: -size + 8, fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, fontWeight: 500, color: "#1C1B17" }}>
+        {value.toFixed(1)}
+      </div>
+      {label && <div style={{ fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase", color: "#9A9484", fontFamily: "'IBM Plex Mono', monospace", marginTop: size - 4 }}>{label}</div>}
+    </div>
+  );
+}
+
+function PinBadge({ n, style }) {
+  return (
+    <div
+      style={{
+        position: "absolute",
+        width: 26,
+        height: 26,
+        borderRadius: "50%",
+        background: "#D6432B",
+        border: "2px solid #FAF9F4",
+        color: "#FAF9F4",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontFamily: "'IBM Plex Mono', monospace",
+        fontSize: 12,
+        fontWeight: 500,
+        boxShadow: "0 2px 6px rgba(0,0,0,0.25)",
+        cursor: "default",
+        ...style,
+      }}
+    >
+      {n}
+    </div>
+  );
+}
+
+function PlaceholderArt({ hue = 224, label }) {
+  return (
+    <div
+      style={{
+        width: "100%",
+        height: "100%",
+        background: `linear-gradient(135deg, hsl(${hue} 45% 88%), hsl(${hue + 40} 40% 78%))`,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        position: "relative",
+        overflow: "hidden",
+      }}
+    >
+      <svg width="60%" height="60%" viewBox="0 0 200 140" style={{ opacity: 0.35 }}>
+        <rect x="10" y="10" width="180" height="30" fill={`hsl(${hue} 30% 30%)`} />
+        <rect x="10" y="50" width="110" height="14" fill={`hsl(${hue} 30% 30%)`} />
+        <rect x="10" y="72" width="150" height="14" fill={`hsl(${hue} 30% 30%)`} />
+        <rect x="10" y="100" width="70" height="26" fill={`hsl(${hue} 30% 20%)`} />
+      </svg>
+      {label && (
+        <div style={{ position: "absolute", bottom: 10, right: 12, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: `hsl(${hue} 25% 25%)`, letterSpacing: "0.05em" }}>
+          {label}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Btn({ children, onClick, variant = "primary", style, type = "button", disabled }) {
+  const base = {
+    fontFamily: "'Space Grotesk', sans-serif",
+    fontWeight: 500,
+    fontSize: 13.5,
+    padding: "10px 18px",
+    borderRadius: 3,
+    cursor: disabled ? "not-allowed" : "pointer",
+    border: "1.5px solid #1C1B17",
+    letterSpacing: "0.01em",
+    transition: "all 0.15s ease",
+    opacity: disabled ? 0.5 : 1,
+  };
+  const variants = {
+    primary: { background: "#1C1B17", color: "#FAF9F4" },
+    ghost: { background: "transparent", color: "#1C1B17" },
+    accent: { background: "#2A4FD6", color: "#FAF9F4", border: "1.5px solid #2A4FD6" },
+  };
+  return (
+    <button type={type} disabled={disabled} onClick={onClick} style={{ ...base, ...variants[variant], ...style }}>
+      {children}
+    </button>
+  );
+}
+
+/* ---------------------------------------------------------
+   MAIN APP
+--------------------------------------------------------- */
+
+function App() {
+  const [view, setView] = useState("feed"); // feed | detail | upload | profile
+  const [designs, setDesigns] = useState(SEED_DESIGNS);
+  const [critiques, setCritiques] = useState([]); // {id, designId, author, anon, scores:{}, comment, createdAt}
+  const [activeId, setActiveId] = useState(null);
+  const [loaded, setLoaded] = useState(false);
+  const [userName] = useState("You");
+
+  useEffect(() => {
+    (async () => {
+      const d = await loadList("design");
+      const c = await loadList("critique");
+      if (d.length) setDesigns([...SEED_DESIGNS, ...d.sort((a, b) => b.createdAt - a.createdAt)]);
+      if (c.length) setCritiques(c);
+      setLoaded(true);
+    })();
+  }, []);
+
+  const addDesign = async (d) => {
+    setDesigns((prev) => [d, ...prev]);
+    await saveItem("design", d.id, d);
+  };
+  const addCritique = async (c) => {
+    setCritiques((prev) => [...prev, c]);
+    await saveItem("critique", c.id, c);
+  };
+
+  const openDesign = (id) => {
+    setActiveId(id);
+    setView("detail");
+  };
+
+  const activeDesign = designs.find((d) => d.id === activeId);
+  const activeCritiques = critiques.filter((c) => c.designId === activeId);
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#FAF9F4", color: "#1C1B17", fontFamily: "'Source Serif 4', serif" }}>
+      <style>{FONT_IMPORT}</style>
+      <TopNav view={view} setView={setView} />
+      <div style={{ maxWidth: 1080, margin: "0 auto", padding: "0 24px 80px" }}>
+        {!loaded ? (
+          <div style={{ padding: 80, textAlign: "center", color: "#9A9484", fontFamily: "'IBM Plex Mono', monospace", fontSize: 13 }}>loading board…</div>
+        ) : view === "feed" ? (
+          <Feed designs={designs} critiques={critiques} onOpen={openDesign} onUpload={() => setView("upload")} />
+        ) : view === "upload" ? (
+          <Upload onSubmit={async (d) => { await addDesign(d); openDesign(d.id); }} onCancel={() => setView("feed")} userName={userName} />
+        ) : view === "detail" && activeDesign ? (
+          <Detail design={activeDesign} critiques={activeCritiques} onAddCritique={addCritique} userName={userName} onBack={() => setView("feed")} />
+        ) : view === "profile" ? (
+          <Profile designs={designs} critiques={critiques} userName={userName} onOpen={openDesign} />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------
+   NAV
+--------------------------------------------------------- */
+function TopNav({ view, setView }) {
+  return (
+    <div style={{ borderBottom: "1.5px solid #1C1B17", position: "sticky", top: 0, background: "#FAF9F4", zIndex: 20 }}>
+      <div style={{ maxWidth: 1080, margin: "0 auto", padding: "16px 24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div onClick={() => setView("feed")} style={{ cursor: "pointer", display: "flex", alignItems: "baseline", gap: 8 }}>
+          <span style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 20, letterSpacing: "-0.02em" }}>Redline</span>
+          <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: "#9A9484", letterSpacing: "0.08em" }}>CRITIQUE&nbsp;BOARD</span>
+        </div>
+        <div style={{ display: "flex", gap: 22, fontFamily: "'IBM Plex Mono', monospace", fontSize: 12.5 }}>
+          <NavLink label="Board" active={view === "feed" || view === "detail"} onClick={() => setView("feed")} />
+          <NavLink label="Upload" active={view === "upload"} onClick={() => setView("upload")} />
+          <NavLink label="Profile" active={view === "profile"} onClick={() => setView("profile")} />
+        </div>
+      </div>
+    </div>
+  );
+}
+function NavLink({ label, active, onClick }) {
+  return (
+    <span onClick={onClick} style={{ cursor: "pointer", color: active ? "#2A4FD6" : "#1C1B17", borderBottom: active ? "2px solid #2A4FD6" : "2px solid transparent", paddingBottom: 2, letterSpacing: "0.04em" }}>
+      {label.toUpperCase()}
+    </span>
+  );
+}
+
+/* ---------------------------------------------------------
+   FEED
+--------------------------------------------------------- */
+function Feed({ designs, critiques, onOpen, onUpload }) {
+  return (
+    <div>
+      <div style={{ padding: "40px 0 28px", display: "flex", justifyContent: "space-between", alignItems: "flex-end", borderBottom: "1px dashed #C9C4B4" }}>
+        <div>
+          <h1 style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 32, fontWeight: 700, margin: 0, letterSpacing: "-0.02em" }}>The board</h1>
+          <p style={{ color: "#9A9484", margin: "6px 0 0", fontSize: 14.5, fontStyle: "italic" }}>Pin your work. Get marked up by other designers.</p>
+        </div>
+        <Btn variant="accent" onClick={onUpload}>+ Upload work</Btn>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 22, marginTop: 32 }}>
+        {designs.map((d) => {
+          const dc = critiques.filter((c) => c.designId === d.id);
+          const avg = dc.length ? (dc.reduce((s, c) => s + CATS.reduce((a, k) => a + c.scores[k], 0) / 5, 0) / dc.length).toFixed(1) : null;
+          return (
+            <div
+              key={d.id}
+              onClick={() => onOpen(d.id)}
+              style={{ cursor: "pointer", background: "#fff", border: "1.5px solid #1C1B17", borderRadius: 4, overflow: "hidden", position: "relative", boxShadow: "3px 3px 0 #E4E0D4" }}
+            >
+              <div style={{ height: 220, position: "relative" }}>
+                {d.imageV1 ? <img src={d.imageV1} alt={d.title} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} /> : <PlaceholderArt hue={d.hue} label="sample" />}
+                {d.imageV2 && (
+                  <div style={{ position: "absolute", top: 10, right: 10, background: "#1C1B17", color: "#FAF9F4", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "3px 8px", borderRadius: 2, letterSpacing: "0.06em" }}>
+                    V1 / V2
+                  </div>
+                )}
+              </div>
+              <div style={{ padding: "14px 16px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <div>
+                    <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 16.5 }}>{d.title}</div>
+                    <div style={{ color: "#9A9484", fontSize: 12.5, marginTop: 2 }}>{d.ownerName} · {d.category}</div>
+                  </div>
+                  {avg && (
+                    <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, background: "#F0C33C33", border: "1px solid #1C1B17", borderRadius: 3, padding: "2px 7px" }}>
+                      {avg}
+                    </div>
+                  )}
+                </div>
+                <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: "#9A9484", marginTop: 10 }}>{dc.length} critique{dc.length !== 1 ? "s" : ""}</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------
+   UPLOAD
+--------------------------------------------------------- */
+function Upload({ onSubmit, onCancel, userName }) {
+  const [title, setTitle] = useState("");
+  const [category, setCategory] = useState("Product / UI");
+  const [imgV1, setImgV1] = useState(null);
+  const [imgV2, setImgV2] = useState(null);
+  const [hasV2, setHasV2] = useState(false);
+
+  const readFile = (file, cb) => {
+    const reader = new FileReader();
+    reader.onload = () => cb(reader.result);
+    reader.readAsDataURL(file);
+  };
+
+  const submit = () => {
+    if (!title.trim() || !imgV1) return;
+    onSubmit({
+      id: uid(),
+      title: title.trim(),
+      ownerName: userName,
+      category,
+      imageV1: imgV1,
+      imageV2: hasV2 ? imgV2 : null,
+      createdAt: now(),
+    });
+  };
+
+  return (
+    <div style={{ maxWidth: 560, margin: "48px auto 0" }}>
+      <h1 style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 26, fontWeight: 700 }}>Pin new work</h1>
+      <p style={{ color: "#9A9484", fontSize: 14, marginTop: -8 }}>Upload one version, or two to enable a before/after compare.</p>
+
+      <Field label="Title">
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Meridian — Onboarding Flow" style={inputStyle} />
+      </Field>
+
+      <Field label="Category">
+        <select value={category} onChange={(e) => setCategory(e.target.value)} style={inputStyle}>
+          {["Product / UI", "Branding", "Web Design", "Poster / Print", "Motion", "Illustration"].map((c) => <option key={c}>{c}</option>)}
+        </select>
+      </Field>
+
+      <Field label="Version 1 (required)">
+        <FileDrop onFile={(f) => readFile(f, setImgV1)} preview={imgV1} />
+      </Field>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "18px 0 4px" }}>
+        <input type="checkbox" checked={hasV2} onChange={(e) => setHasV2(e.target.checked)} id="v2toggle" />
+        <label htmlFor="v2toggle" style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12.5, cursor: "pointer" }}>Add a second version to compare</label>
+      </div>
+      {hasV2 && (
+        <Field label="Version 2">
+          <FileDrop onFile={(f) => readFile(f, setImgV2)} preview={imgV2} />
+        </Field>
+      )}
+
+      <div style={{ display: "flex", gap: 10, marginTop: 26 }}>
+        <Btn variant="accent" onClick={submit} disabled={!title.trim() || !imgV1}>Pin to board</Btn>
+        <Btn variant="ghost" onClick={onCancel}>Cancel</Btn>
+      </div>
+    </div>
+  );
+}
+const inputStyle = {
+  width: "100%", padding: "10px 12px", border: "1.5px solid #1C1B17", borderRadius: 3, fontFamily: "'Source Serif 4', serif", fontSize: 14.5, background: "#fff", boxSizing: "border-box",
+};
+function Field({ label, children }) {
+  return (
+    <div style={{ marginTop: 16 }}>
+      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.06em", color: "#9A9484", marginBottom: 6 }}>{label.toUpperCase()}</div>
+      {children}
+    </div>
+  );
+}
+function FileDrop({ onFile, preview }) {
+  const inputRef = useRef();
+  return (
+    <div onClick={() => inputRef.current.click()} style={{ border: "1.5px dashed #9A9484", borderRadius: 4, height: 160, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", overflow: "hidden", background: "#fff" }}>
+      <input ref={inputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => e.target.files[0] && onFile(e.target.files[0])} />
+      {preview ? <img src={preview} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12.5, color: "#9A9484" }}>click to choose image</span>}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------
+   DETAIL (image + slider + critiques + AI summary)
+--------------------------------------------------------- */
+function Detail({ design, critiques, onAddCritique, userName, onBack }) {
+  const [showForm, setShowForm] = useState(false);
+  const [sliderPos, setSliderPos] = useState(50);
+
+  return (
+    <div style={{ paddingTop: 28 }}>
+      <span onClick={onBack} style={{ cursor: "pointer", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: "#9A9484" }}>← back to board</span>
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginTop: 10 }}>
+        <div>
+          <h1 style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 28, fontWeight: 700, margin: 0 }}>{design.title}</h1>
+          <div style={{ color: "#9A9484", fontSize: 13.5, marginTop: 4 }}>{design.ownerName} · {design.category}</div>
+        </div>
+        <Btn variant="accent" onClick={() => setShowForm((s) => !s)}>{showForm ? "Close form" : "Add critique"}</Btn>
+      </div>
+
+      <div style={{ marginTop: 20 }}>
+        {design.imageV2 ? (
+          <CompareSlider imgA={design.imageV1} imgB={design.imageV2} hue={design.hue} sliderPos={sliderPos} setSliderPos={setSliderPos} />
+        ) : (
+          <div style={{ border: "1.5px solid #1C1B17", borderRadius: 4, overflow: "hidden", height: 420 }}>
+            {design.imageV1 ? <img src={design.imageV1} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <PlaceholderArt hue={design.hue} label="sample" />}
+          </div>
+        )}
+      </div>
+
+      {showForm && <CritiqueForm design={design} userName={userName} onSubmit={(c) => { onAddCritique(c); setShowForm(false); }} />}
+
+      <AISummary design={design} critiques={critiques} />
+
+      <div style={{ marginTop: 34 }}>
+        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11.5, letterSpacing: "0.06em", color: "#9A9484", marginBottom: 12, borderBottom: "1px dashed #C9C4B4", paddingBottom: 8 }}>
+          {critiques.length} CRITIQUE{critiques.length !== 1 ? "S" : ""}
+        </div>
+        {critiques.length === 0 && <p style={{ color: "#9A9484", fontStyle: "italic", fontSize: 14 }}>No marks yet — be the first to critique this.</p>}
+        {critiques.map((c, i) => <CritiqueCard key={c.id} c={c} n={i + 1} />)}
+      </div>
+    </div>
+  );
+}
+
+function CompareSlider({ imgA, imgB, hue, sliderPos, setSliderPos }) {
+  const ref = useRef();
+  const dragging = useRef(false);
+
+  const move = useCallback((clientX) => {
+    const rect = ref.current.getBoundingClientRect();
+    let pct = ((clientX - rect.left) / rect.width) * 100;
+    pct = Math.max(0, Math.min(100, pct));
+    setSliderPos(pct);
+  }, [setSliderPos]);
+
+  useEffect(() => {
+    const onMove = (e) => { if (dragging.current) move(e.touches ? e.touches[0].clientX : e.clientX); };
+    const onUp = () => { dragging.current = false; };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    window.addEventListener("touchmove", onMove);
+    window.addEventListener("touchend", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("touchmove", onMove);
+      window.removeEventListener("touchend", onUp);
+    };
+  }, [move]);
+
+  return (
+    <div ref={ref} style={{ position: "relative", height: 420, border: "1.5px solid #1C1B17", borderRadius: 4, overflow: "hidden", userSelect: "none", cursor: "ew-resize" }}
+      onMouseDown={(e) => { dragging.current = true; move(e.clientX); }}
+      onTouchStart={(e) => { dragging.current = true; move(e.touches[0].clientX); }}
+    >
+      <div style={{ position: "absolute", inset: 0 }}>{imgB ? <img src={imgB} alt="v2" style={{ width: "100%", height: "100%", objectFit: "cover" }} draggable={false} /> : <PlaceholderArt hue={hue + 20} label="v2" />}</div>
+      <div style={{ position: "absolute", inset: 0, width: `${sliderPos}%`, overflow: "hidden" }}>
+        {imgA ? <img src={imgA} alt="v1" style={{ width: ref.current ? ref.current.offsetWidth : "100%", height: "100%", objectFit: "cover" }} draggable={false} /> : <PlaceholderArt hue={hue} label="v1" />}
+      </div>
+      <div style={{ position: "absolute", top: 0, bottom: 0, left: `${sliderPos}%`, width: 2, background: "#FAF9F4", boxShadow: "0 0 0 1.5px #1C1B17" }} />
+      <div style={{ position: "absolute", top: "50%", left: `${sliderPos}%`, transform: "translate(-50%,-50%)", width: 34, height: 34, borderRadius: "50%", background: "#FAF9F4", border: "1.5px solid #1C1B17", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11 }}>
+        ↔
+      </div>
+      <span style={{ position: "absolute", bottom: 10, left: 10, background: "#1C1B17", color: "#FAF9F4", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "3px 7px", borderRadius: 2 }}>V1</span>
+      <span style={{ position: "absolute", bottom: 10, right: 10, background: "#1C1B17", color: "#FAF9F4", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "3px 7px", borderRadius: 2 }}>V2</span>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------
+   CRITIQUE FORM
+--------------------------------------------------------- */
+function CritiqueForm({ design, userName, onSubmit }) {
+  const [scores, setScores] = useState({ typography: 5, layout: 5, color: 5, concept: 5, ux: 5 });
+  const [comment, setComment] = useState("");
+  const [anon, setAnon] = useState(false);
+
+  const submit = () => {
+    if (!comment.trim()) return;
+    onSubmit({ id: uid(), designId: design.id, author: userName, anon, scores, comment: comment.trim(), createdAt: now() });
+  };
+
+  return (
+    <div style={{ marginTop: 22, border: "1.5px solid #1C1B17", borderRadius: 4, padding: 22, background: "#fff" }}>
+      <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 16, marginBottom: 16 }}>Mark it up</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 18 }}>
+        {CATS.map((k) => (
+          <div key={k} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+            <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: "#9A9484", letterSpacing: "0.04em" }}>{CAT_LABEL[k].toUpperCase()}</span>
+            <input type="range" min={1} max={10} value={scores[k]} onChange={(e) => setScores({ ...scores, [k]: Number(e.target.value) })} style={{ width: "100%", accentColor: "#2A4FD6" }} />
+            <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, fontWeight: 500 }}>{scores[k]}</span>
+          </div>
+        ))}
+      </div>
+      <textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder="What's working, what isn't, what you'd change..." rows={4} style={{ ...inputStyle, resize: "vertical" }} />
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 7, fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, cursor: "pointer" }}>
+          <input type="checkbox" checked={anon} onChange={(e) => setAnon(e.target.checked)} /> critique anonymously
+        </label>
+        <Btn variant="accent" onClick={submit} disabled={!comment.trim()}>Submit critique</Btn>
+      </div>
+    </div>
+  );
+}
+
+function CritiqueCard({ c, n }) {
+  const overallAvg = (CATS.reduce((s, k) => s + c.scores[k], 0) / 5).toFixed(1);
+  return (
+    <div style={{ display: "flex", gap: 14, padding: "16px 0", borderBottom: "1px dashed #E4E0D4" }}>
+      <div style={{ width: 26, height: 26, borderRadius: "50%", background: "#D6432B", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, flexShrink: 0, marginTop: 2 }}>{n}</div>
+      <div style={{ flex: 1 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+          <span style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 14.5 }}>{c.anon ? "Anonymous" : c.author}</span>
+          <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, background: "#F0C33C33", border: "1px solid #1C1B17", borderRadius: 3, padding: "1px 6px" }}>{overallAvg}</span>
+        </div>
+        <p style={{ margin: "6px 0 10px", fontSize: 14.5, lineHeight: 1.5 }}>{c.comment}</p>
+        <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+          {CATS.map((k) => (
+            <span key={k} style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: "#9A9484" }}>
+              {CAT_LABEL[k]} <b style={{ color: "#1C1B17" }}>{c.scores[k]}</b>
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------
+   AI SUMMARY
+--------------------------------------------------------- */
+function AISummary({ design, critiques }) {
+  const [summary, setSummary] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const generate = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const body = critiques.map((c, i) => {
+        const scoreStr = CATS.map((k) => `${CAT_LABEL[k]}: ${c.scores[k]}/10`).join(", ");
+        return `Critique ${i + 1} (${scoreStr})\n"${c.comment}"`;
+      }).join("\n\n");
+
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 1000,
+          messages: [{
+            role: "user",
+            content: `You are summarizing peer design critiques for "${design.title}". Here is all the feedback:\n\n${body}\n\nRespond with ONLY valid JSON, no preamble, no markdown fences, in this exact shape:\n{"improvements": ["...", "...", "..."]}\nGive exactly 3 concise, concrete, actionable improvements a designer could act on immediately, synthesized across all the critiques above.`,
+          }],
+        }),
+      });
+      const data = await response.json();
+      const text = (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
+      const clean = text.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(clean);
+      setSummary(parsed.improvements || []);
+    } catch (e) {
+      setError("Couldn't generate a summary just now.");
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div style={{ marginTop: 24, border: "1.5px solid #2A4FD6", borderRadius: 4, padding: 20, background: "#2A4FD60A" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 15, color: "#2A4FD6" }}>AI SYNTHESIS</div>
+        <Btn variant="ghost" style={{ border: "1.5px solid #2A4FD6", color: "#2A4FD6", fontSize: 12, padding: "6px 12px" }} onClick={generate} disabled={loading || critiques.length === 0}>
+          {loading ? "Reading critiques…" : "Summarize feedback"}
+        </Btn>
+      </div>
+      {critiques.length === 0 && <p style={{ color: "#9A9484", fontSize: 13, marginTop: 8, fontStyle: "italic" }}>Needs at least one critique to summarize.</p>}
+      {error && <p style={{ color: "#D6432B", fontSize: 13, marginTop: 8 }}>{error}</p>}
+      {summary && (
+        <ol style={{ marginTop: 12, paddingLeft: 20 }}>
+          {summary.map((s, i) => (
+            <li key={i} style={{ fontSize: 14.5, marginBottom: 8, lineHeight: 1.5 }}>{s}</li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------
+   PROFILE
+--------------------------------------------------------- */
+function Profile({ designs, critiques, userName, onOpen }) {
+  const mine = designs.filter((d) => d.ownerName === userName);
+  const given = critiques.filter((c) => c.author === userName);
+  return (
+    <div style={{ paddingTop: 32 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 16, borderBottom: "1px dashed #C9C4B4", paddingBottom: 24 }}>
+        <div style={{ width: 64, height: 64, borderRadius: "50%", background: "#1C1B17", color: "#FAF9F4", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 24 }}>
+          {userName[0]}
+        </div>
+        <div>
+          <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 22 }}>{userName}</div>
+          <div style={{ color: "#9A9484", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, marginTop: 2 }}>{mine.length} pinned · {given.length} critiques given</div>
+        </div>
+      </div>
+
+      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11.5, letterSpacing: "0.06em", color: "#9A9484", margin: "26px 0 12px" }}>PORTFOLIO</div>
+      {mine.length === 0 && <p style={{ color: "#9A9484", fontStyle: "italic", fontSize: 14 }}>Nothing pinned yet — upload your first piece.</p>}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
+        {mine.map((d) => (
+          <div key={d.id} onClick={() => onOpen(d.id)} style={{ cursor: "pointer", border: "1.5px solid #1C1B17", borderRadius: 4, overflow: "hidden", height: 140 }}>
+            {d.imageV1 ? <img src={d.imageV1} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <PlaceholderArt hue={d.hue} />}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+</script>
+</body>
+</html>
